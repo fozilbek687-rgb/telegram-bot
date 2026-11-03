@@ -9,9 +9,10 @@ from flask import Flask
 
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
+# Token to'g'ridan-to'g'ri yozildi, chunki Render'da input() ishlamaydi
+TOKEN = "7900512582:AAEtg... (tokeningiz shu yerda turadi, xohlasangiz o'zingiznikini yozing)"
 # ========================
 
-TOKEN = input("Bot tokenini kiriting va Enter bosing: ").strip().strip('"')
 URL = f"https://api.telegram.org/bot{TOKEN}/"
 
 db = sqlite3.connect("baza.db", check_same_thread=False)
@@ -45,32 +46,8 @@ def normalize_channel(text):
     return text if text.startswith("@") else "@" + text
 
 
-def ask_channels():
-    saved = get_setting("channels")
-    if saved:
-        prompt = (
-            f"Majburiy kanal: {saved}\n"
-            "Shu qolsinmi? Qoldirish uchun Enter bosing, o'zgartirish uchun yangi kanal yozing\n"
-            "(bir nechta bo'lsa vergul bilan, kanalsiz ishlatish uchun 0 yozing): "
-        )
-    else:
-        prompt = (
-            "Majburiy kanal username'ini yozing (masalan @kino_olami_2026_11).\n"
-            "Bir nechta bo'lsa vergul bilan, kanalsiz ishlatish uchun 0 yozing: "
-        )
-    answer = input(prompt).strip()
-    if answer == "" and saved:
-        value = saved
-    elif answer == "0":
-        value = ""
-    else:
-        parts = [normalize_channel(p) for p in answer.split(",")]
-        value = ",".join(p for p in parts if p)
-    set_setting("channels", value)
-    return [c for c in value.split(",") if c]
-
-
-CHANNELS = ask_channels()
+# Render'da input ishlamagani uchun majburiy kanallarni avtomatik sozlaymiz (agar bazada bo'lmasa bo'sh bo'ladi)
+CHANNELS = [c for c in get_setting("channels").split(",") if c]
 PENDING = {}  # obuna bo'lmagan odam yozgan kod shu yerda kutadi
 
 
