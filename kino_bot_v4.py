@@ -9,9 +9,7 @@ from flask import Flask
 
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
-
-# PASTDAGI TIRNOQ ICHIGA O'ZINGIZNING HAQIQIY TELEGRAM BOT TOKENINGIZNI YOZING:
-TOKEN = "BURAYA_TOKENINGIZNI_YOZING"
+TOKEN = "9232105649:AAGHqKhoyn390XrLB6ihk8skLTq3se_IGOM"
 # ========================
 
 URL = f"https://api.telegram.org/bot{TOKEN}/"
