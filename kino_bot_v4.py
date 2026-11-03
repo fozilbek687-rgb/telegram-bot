@@ -10,6 +10,8 @@ from flask import Flask
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
 TOKEN = "9232105649:AAGHqKhoyn390XrLB6ihk8skLTq3se_IGOM"
+# Majburiy obuna uchun kanal(lar)
+CHANNELS = ["@kino_olami_2026_11"]
 # ========================
 
 URL = f"https://api.telegram.org/bot{TOKEN}/"
@@ -23,31 +25,7 @@ db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
 db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 db.commit()
 
-
-def get_setting(key):
-    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    return row[0] if row else ""
-
-
-def set_setting(key, value):
-    db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, value))
-    db.commit()
-
-
-def normalize_channel(text):
-    text = text.strip().strip('"')
-    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
-        if text.startswith(prefix):
-            text = text[len(prefix):]
-    text = text.strip("/")
-    if not text:
-        return ""
-    return text if text.startswith("@") else "@" + text
-
-
-CHANNELS = [c for c in get_setting("channels").split(",") if c]
 PENDING = {}
-
 
 def api(method, **params):
     data = json.dumps(params).encode("utf-8")
@@ -79,15 +57,15 @@ def is_member(user_id):
 
 def ask_subscribe(chat_id):
     rows = [
-        [{"text": f"📢 {ch}", "url": "https://t.me/" + ch.lstrip("@")}]
+        [{"text": f"📢 Kanalga a'zo bo'lish", "url": "https://t.me/" + ch.lstrip("@")}]
         for ch in CHANNELS
     ]
     rows.append([{"text": "🔄 Tekshirish", "callback_data": "check"}])
     names = "\n".join(CHANNELS)
     send(
         chat_id,
-        f"❌ Kinoni olish uchun avval kanalga a'zo bo'ling:\n{names}\n\n"
-        "A'zo bo'lgach «🔄 Tekshirish» ni bosing, kinoni o'zim yuboraman.",
+        f"❌ Kinoni olish uchun avval quyidagi kanalga a'zo bo'ling:\n{names}\n\n"
+        "A'zo bo'lgach «🔄 Tekshirish» tugmasini bosing.",
         reply_markup={"inline_keyboard": rows},
     )
 
@@ -115,7 +93,7 @@ def handle_callback(cb):
     if cb.get("data") != "check":
         return
     if is_member(user_id):
-        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat! ✅")
+        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat, obuna tasdiqlandi! ✅")
         code = PENDING.pop(user_id, None)
         if code:
             send_movie(chat_id, code)
@@ -176,7 +154,7 @@ def handle(msg):
         if not is_member(user_id):
             ask_subscribe(chat_id)
             return
-        send(chat_id, "Salom! 👋\nInstagramdagi kodni shu yerga yozing, men uni topib beraman.")
+        send(chat_id, "Salom! 👋\nKino kodini shu yerga yozing, men uni topib beraman.")
         return
 
     if text:
@@ -185,16 +163,6 @@ def handle(msg):
             ask_subscribe(chat_id)
             return
         send_movie(chat_id, text)
-
-
-def check_channels(bot_id):
-    if not CHANNELS:
-        return
-    for ch in CHANNELS:
-        try:
-            api("getChat", chat_id=ch)
-        except Exception:
-            pass
 
 
 # --- FLASK SERVER (Render Web Service uchun) ---
@@ -216,8 +184,6 @@ def main():
     except Exception as e:
         print("Token xato yoki internet yo'q:", e)
         return
-
-    check_channels(me["result"]["id"])
 
     t = threading.Thread(target=run_flask)
     t.daemon = True
