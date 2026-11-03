@@ -9,16 +9,13 @@ from flask import Flask
 
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
+TOKEN = "9232105649:AAGHqKhoyn390XrLB6ihk8skLTq3se_IGOM"
+DEFAULT_CHANNEL = "@kino_olami_2026_11"
 # ========================
-
-# Render muhitidan tokenni avtomat olish (agar bo'lmasa terminaldan so'raydi)
-TOKEN = os.environ.get("BOT_TOKEN", "").strip().strip('"')
-if not TOKEN:
-    TOKEN = input("Bot tokenini kiriting va Enter bosing: ").strip().strip('"')
 
 URL = f"https://api.telegram.org/bot{TOKEN}/"
 
-# Ma'lumotlar bazasini Render o'chirmaydigan papkada ochish
+# Ma'lumotlar bazasini ochish
 DB_PATH = "baza.db"
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.execute(
@@ -28,6 +25,11 @@ db.execute(
 db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
 db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 db.commit()
+
+# Agar bazada kanal hali bo'lmasa, avtomatik ravishda @kino_olami_2026_11 ni yozib qo'yamiz
+if not db.execute("SELECT value FROM settings WHERE key = 'channels'").fetchone():
+    db.execute("INSERT OR REPLACE INTO settings VALUES ('channels', ?)", (DEFAULT_CHANNEL,))
+    db.commit()
 
 
 def get_setting(key):
@@ -55,7 +57,7 @@ def ask_channels():
     saved = get_setting("channels")
     if saved:
         return [c for c in saved.split(",") if c]
-    return []
+    return [DEFAULT_CHANNEL]
 
 
 CHANNELS = ask_channels()
@@ -95,15 +97,15 @@ def is_member(user_id):
 
 def ask_subscribe(chat_id):
     rows = [
-        [{"text": f"📢 {ch}", "url": "https://t.me/" + ch.lstrip("@")}]
+        [{"text": f"📢 Kanalga a'zo bo'lish", "url": "https://t.me/" + ch.lstrip("@")}]
         for ch in CHANNELS
     ]
     rows.append([{"text": "🔄 Tekshirish", "callback_data": "check"}])
     names = "\n".join(CHANNELS)
     send(
         chat_id,
-        f"❌ Kinoni olish uchun avval kanalga a'zo bo'ling:\n{names}\n\n"
-        "A'zo bo'lgach «🔄 Tekshirish» ni bosing, kinoni o'zim yuboraman.",
+        f"❌ Kinoni olish uchun avval kanalimizga a'zo bo'ling:\n{names}\n\n"
+        "A'zo bo'lgach «🔄 Tekshirish» tugmasini bosing.",
         reply_markup={"inline_keyboard": rows},
     )
 
@@ -125,7 +127,7 @@ def send_movie(chat_id, code):
     try:
         api(method, chat_id=chat_id, caption=title, **{key: file_id})
     except Exception as e:
-        print(" Kinoni yuborishda xato:", e)
+        print("Kinoni yuborishda xato:", e)
 
 
 def handle_callback(cb):
@@ -134,15 +136,21 @@ def handle_callback(cb):
     if cb.get("data") != "check":
         return
     if is_member(user_id):
-        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat! ✅")
+        try:
+            api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat! ✅")
+        except Exception:
+            pass
         code = PENDING.pop(user_id, None)
         if code:
             send_movie(chat_id, code)
         else:
             send(chat_id, "✅ Obuna tasdiqlandi! Endi kino kodini yuboring.")
     else:
-        api("answerCallbackQuery", callback_query_id=cb["id"],
-            text="Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True)
+        try:
+            api("answerCallbackQuery", callback_query_id=cb["id"],
+                text="Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True)
+        except Exception:
+            pass
 
 
 def handle(msg):
@@ -261,3 +269,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
