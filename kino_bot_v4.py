@@ -9,14 +9,18 @@ from flask import Flask
 
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
-TOKEN = "9232105649:AAGHqKhoyn390XrLB6ihk8skLTq3se_IGOM"
-# Majburiy obuna uchun kanal(lar)
-CHANNELS = ["@kino_olami_2026_11"]
 # ========================
+
+# Render muhitidan tokenni avtomat olish (agar bo'lmasa terminaldan so'raydi)
+TOKEN = os.environ.get("BOT_TOKEN", "").strip().strip('"')
+if not TOKEN:
+    TOKEN = input("Bot tokenini kiriting va Enter bosing: ").strip().strip('"')
 
 URL = f"https://api.telegram.org/bot{TOKEN}/"
 
-db = sqlite3.connect("baza.db", check_same_thread=False)
+# Ma'lumotlar bazasini Render o'chirmaydigan papkada ochish
+DB_PATH = "baza.db"
+db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.execute(
     "CREATE TABLE IF NOT EXISTS items ("
     "code TEXT PRIMARY KEY, file_id TEXT, file_type TEXT, title TEXT)"
@@ -25,7 +29,38 @@ db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
 db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 db.commit()
 
+
+def get_setting(key):
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else ""
+
+
+def set_setting(key, value):
+    db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, value))
+    db.commit()
+
+
+def normalize_channel(text):
+    text = text.strip().strip('"')
+    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    text = text.strip("/")
+    if not text:
+        return ""
+    return text if text.startswith("@") else "@" + text
+
+
+def ask_channels():
+    saved = get_setting("channels")
+    if saved:
+        return [c for c in saved.split(",") if c]
+    return []
+
+
+CHANNELS = ask_channels()
 PENDING = {}
+
 
 def api(method, **params):
     data = json.dumps(params).encode("utf-8")
@@ -37,7 +72,10 @@ def api(method, **params):
 
 
 def send(chat_id, text, **extra):
-    api("sendMessage", chat_id=chat_id, text=text, **extra)
+    try:
+        api("sendMessage", chat_id=chat_id, text=text, **extra)
+    except Exception as e:
+        print("Xabar yuborishda xato:", e)
 
 
 def is_member(user_id):
@@ -57,15 +95,15 @@ def is_member(user_id):
 
 def ask_subscribe(chat_id):
     rows = [
-        [{"text": f"📢 Kanalga a'zo bo'lish", "url": "https://t.me/" + ch.lstrip("@")}]
+        [{"text": f"📢 {ch}", "url": "https://t.me/" + ch.lstrip("@")}]
         for ch in CHANNELS
     ]
     rows.append([{"text": "🔄 Tekshirish", "callback_data": "check"}])
     names = "\n".join(CHANNELS)
     send(
         chat_id,
-        f"❌ Kinoni olish uchun avval quyidagi kanalga a'zo bo'ling:\n{names}\n\n"
-        "A'zo bo'lgach «🔄 Tekshirish» tugmasini bosing.",
+        f"❌ Kinoni olish uchun avval kanalga a'zo bo'ling:\n{names}\n\n"
+        "A'zo bo'lgach «🔄 Tekshirish» ni bosing, kinoni o'zim yuboraman.",
         reply_markup={"inline_keyboard": rows},
     )
 
@@ -84,7 +122,10 @@ def send_movie(chat_id, code):
         "document": ("sendDocument", "document"),
     }
     method, key = methods[ftype]
-    api(method, chat_id=chat_id, caption=title, **{key: file_id})
+    try:
+        api(method, chat_id=chat_id, caption=title, **{key: file_id})
+    except Exception as e:
+        print(" Kinoni yuborishda xato:", e)
 
 
 def handle_callback(cb):
@@ -93,7 +134,7 @@ def handle_callback(cb):
     if cb.get("data") != "check":
         return
     if is_member(user_id):
-        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat, obuna tasdiqlandi! ✅")
+        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat! ✅")
         code = PENDING.pop(user_id, None)
         if code:
             send_movie(chat_id, code)
@@ -114,6 +155,16 @@ def handle(msg):
     db.execute("INSERT OR IGNORE INTO users VALUES (?)", (user_id,))
     db.commit()
 
+    # Admin: kanal sozlash (/setchannel @kanal)
+    if is_admin and text.startswith("/setchannel "):
+        new_ch = normalize_channel(text.split(maxsplit=1)[1])
+        set_setting("channels", new_ch)
+        global CHANNELS
+        CHANNELS = ask_channels()
+        send(chat_id, f"✅ Majburiy kanal o'rnatildi: {new_ch}")
+        return
+
+    # Admin: fayl qo'shish
     if is_admin and has_media:
         caption = (msg.get("caption") or "").strip()
         if not caption:
@@ -147,25 +198,26 @@ def handle(msg):
     if is_admin and text == "/stats":
         users = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         items = db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        send(chat_id, f"📊 Foydalanuvchilar: {users} ta\n🎬 Kinolar: {items} ta")
+        channels_list = get_setting("channels") or "Kanal ulanmagan"
+        send(chat_id, f"📊 Foydalanuvchilar: {users} ta\n🎬 Kinolar: {items} ta\n📢 Majburiy kanal: {channels_list}")
         return
 
     if text == "/start":
-        if not is_member(user_id):
+        if CHANNELS and not is_member(user_id):
             ask_subscribe(chat_id)
             return
-        send(chat_id, "Salom! 👋\nKino kodini shu yerga yozing, men uni topib beraman.")
+        send(chat_id, "Salom! 👋\nKino kodini yuboring, men uni topib beraman.")
         return
 
     if text:
-        if not is_member(user_id):
+        if CHANNELS and not is_member(user_id):
             PENDING[user_id] = text
             ask_subscribe(chat_id)
             return
         send_movie(chat_id, text)
 
 
-# --- FLASK SERVER (Render Web Service uchun) ---
+# --- FLASK SERVER ---
 app = Flask(__name__)
 
 @app.route("/")
@@ -182,7 +234,7 @@ def main():
         me = api("getMe")
         print("Bot ishlayapti:", "@" + me["result"]["username"])
     except Exception as e:
-        print("Token xato yoki internet yo'q:", e)
+        print("Token xato:", e)
         return
 
     t = threading.Thread(target=run_flask)
@@ -200,9 +252,10 @@ def main():
                         handle(upd["message"])
                     elif "callback_query" in upd:
                         handle_callback(upd["callback_query"])
-                except Exception:
-                    pass
-        except Exception:
+                except Exception as e:
+                    print("Xabarda xato:", e)
+        except Exception as e:
+            print("Ulanishda xato:", e)
             time.sleep(3)
 
 
