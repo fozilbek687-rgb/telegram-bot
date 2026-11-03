@@ -1,8 +1,11 @@
 import json
 import sqlite3
 import time
+import os
+import threading
 import urllib.error
 import urllib.request
+from flask import Flask
 
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
@@ -11,7 +14,7 @@ ADMIN_IDS = [7900512582]
 TOKEN = input("Bot tokenini kiriting va Enter bosing: ").strip().strip('"')
 URL = f"https://api.telegram.org/bot{TOKEN}/"
 
-db = sqlite3.connect("baza.db")
+db = sqlite3.connect("baza.db", check_same_thread=False)
 db.execute(
     "CREATE TABLE IF NOT EXISTS items ("
     "code TEXT PRIMARY KEY, file_id TEXT, file_type TEXT, title TEXT)"
@@ -237,6 +240,18 @@ def check_channels(bot_id):
             print(f"❌ {ch}: tekshirib bo'lmadi:", e)
 
 
+# --- FLASK SERVER (Render Web Service uchun) ---
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot ishlayapti!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+
 def main():
     try:
         me = api("getMe")
@@ -246,6 +261,11 @@ def main():
         return
 
     check_channels(me["result"]["id"])
+
+    # Flask serverni alohida oqimda (thread) ishga tushiramiz
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
 
     offset = 0
     while True:
