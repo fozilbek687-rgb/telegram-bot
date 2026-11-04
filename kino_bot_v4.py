@@ -9,9 +9,10 @@ from flask import Flask
 
 # ====== SOZLAMALAR ======
 ADMIN_IDS = [7900512582]
+# Tokeningiz to'g'ridan-to'g'ri yozildi (Render uchun xatosiz ishlaydi)
+TOKEN = "9232105649:AAGHqKhoyn390XrLB6ihk8skLTq3se_IGOM"
 # ========================
 
-TOKEN = input("Bot tokenini kiriting va Enter bosing: ").strip().strip('"')
 URL = f"https://api.telegram.org/bot{TOKEN}/"
 
 db = sqlite3.connect("baza.db", check_same_thread=False)
@@ -45,32 +46,8 @@ def normalize_channel(text):
     return text if text.startswith("@") else "@" + text
 
 
-def ask_channels():
-    saved = get_setting("channels")
-    if saved:
-        prompt = (
-            f"Majburiy kanal: {saved}\n"
-            "Shu qolsinmi? Qoldirish uchun Enter bosing, o'zgartirish uchun yangi kanal yozing\n"
-            "(bir nechta bo'lsa vergul bilan, kanalsiz ishlatish uchun 0 yozing): "
-        )
-    else:
-        prompt = (
-            "Majburiy kanal username'ini yozing (masalan @kino_olami_2026_11).\n"
-            "Bir nechta bo'lsa vergul bilan, kanalsiz ishlatish uchun 0 yozing: "
-        )
-    answer = input(prompt).strip()
-    if answer == "" and saved:
-        value = saved
-    elif answer == "0":
-        value = ""
-    else:
-        parts = [normalize_channel(p) for p in answer.split(",")]
-        value = ",".join(p for p in parts if p)
-    set_setting("channels", value)
-    return [c for c in value.split(",") if c]
-
-
-CHANNELS = ask_channels()
+# Render serverida input ishlamasligi uchun kanal bazadan yoki sukut bo'yicha olinadi
+CHANNELS = [c for c in get_setting("channels").split(",") if c]
 PENDING = {}  # obuna bo'lmagan odam yozgan kod shu yerda kutadi
 
 
@@ -88,7 +65,7 @@ def send(chat_id, text, **extra):
 
 
 def is_member(user_id):
-    """Barcha majburiy kanallarga a'zomi? Xato bo'lsa False qaytaradi va sababini chiqaradi."""
+    """Barcha majburiy kanallarga a'zomi? Xato bo'lsa False qaytaradi."""
     for ch in CHANNELS:
         try:
             res = api("getChatMember", chat_id=ch, user_id=user_id)["result"]
@@ -99,8 +76,7 @@ def is_member(user_id):
             if not ok:
                 return False
         except urllib.error.HTTPError as e:
-            print(f"{ch} tekshirishda xato (bot kanalda admin emasmi?):",
-                  e.read().decode("utf-8", "ignore"))
+            print(f"{ch} tekshirishda xato:", e.read().decode("utf-8", "ignore"))
             return False
         except Exception as e:
             print(f"{ch} tekshirishda xato:", e)
@@ -138,7 +114,7 @@ def send_movie(chat_id, code):
     }
     method, key = methods[ftype]
     
-    # Kinolarni saqlash va boshqalarga yuborishni (forward) taqiqlash qo'shildi:
+    # Kinolarni saqlash va boshqalarga yuborishni (forward) taqiqlash (protect_content=True)
     api(method, chat_id=chat_id, caption=title, protect_content=True, **{key: file_id})
 
 
@@ -208,15 +184,15 @@ def handle(msg):
         return
 
     if text == "/start":
-        if not is_member(user_id):
+        if CHANNELS and not is_member(user_id):
             ask_subscribe(chat_id)
             return
         send(chat_id, "Salom! 👋\nKino kodini shu yerga yozing, men uni topib beraman.")
         return
 
-    # Foydalanuvchi: kod bo'yicha qidirish (avval obunani tekshiramiz)
+    # Foydalanuvchi: kod bo'yicha qidirish
     if text:
-        if not is_member(user_id):
+        if CHANNELS and not is_member(user_id):
             PENDING[user_id] = text
             ask_subscribe(chat_id)
             return
@@ -257,14 +233,14 @@ def run_flask():
 def main():
     try:
         me = api("getMe")
-        print("Bot ishlayapti:", "@" + me["result"]["username"], "(to'xtatish: Ctrl + C)")
+        print("Bot ishlayapti:", "@" + me["result"]["username"])
     except Exception as e:
         print("Token noto'g'ri yoki internet yo'q:", e)
         return
 
     check_channels(me["result"]["id"])
 
-    # Flask serverni alohida oqimda (thread) ishga tushiramiz
+    # Flask serverni alohida oqimda ishga tushiramiz
     t = threading.Thread(target=run_flask)
     t.daemon = True
     t.start()
