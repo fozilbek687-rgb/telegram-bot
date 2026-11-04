@@ -7,11 +7,13 @@ import urllib.error
 import urllib.request
 from flask import Flask
 
-# ====== SOZLAMALAR ======
+# ====== SOZLAMALAR (Hammasi shu yerda doimiy saqlanadi) ======
 ADMIN_IDS = [7900512582]
-# Tokeningiz to'g'ridan-to'g'ri yozildi (Render uchun xatosiz ishlaydi)
 TOKEN = "9232105649:AAGHqKhoyn390XrLB6ihk8skLTq3se_IGOM"
-# ========================
+
+# Majburiy kanalni shu yerga yozib qo'ydik, bazadan o'chib ketmaydi:
+CHANNELS = ["@kino_olami_2026_11"]
+# ============================================================
 
 URL = f"https://api.telegram.org/bot{TOKEN}/"
 
@@ -21,34 +23,9 @@ db.execute(
     "code TEXT PRIMARY KEY, file_id TEXT, file_type TEXT, title TEXT)"
 )
 db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
-db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 db.commit()
 
-
-def get_setting(key):
-    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    return row[0] if row else ""
-
-
-def set_setting(key, value):
-    db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, value))
-    db.commit()
-
-
-def normalize_channel(text):
-    text = text.strip().strip('"')
-    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
-        if text.startswith(prefix):
-            text = text[len(prefix):]
-    text = text.strip("/")
-    if not text:
-        return ""
-    return text if text.startswith("@") else "@" + text
-
-
-# Render serverida input ishlamasligi uchun kanal bazadan yoki sukut bo'yicha olinadi
-CHANNELS = [c for c in get_setting("channels").split(",") if c]
-PENDING = {}  # obuna bo'lmagan odam yozgan kod shu yerda kutadi
+PENDING = {}  # Obuna bo'lmagan foydalanuvchi so'ragan kino kodi vaqtincha saqlanadi
 
 
 def api(method, **params):
@@ -65,7 +42,7 @@ def send(chat_id, text, **extra):
 
 
 def is_member(user_id):
-    """Barcha majburiy kanallarga a'zomi? Xato bo'lsa False qaytaradi."""
+    """Foydalanuvchi majburiy kanalga a'zoligini tekshiradi."""
     for ch in CHANNELS:
         try:
             res = api("getChatMember", chat_id=ch, user_id=user_id)["result"]
@@ -93,8 +70,8 @@ def ask_subscribe(chat_id):
     names = "\n".join(CHANNELS)
     send(
         chat_id,
-        f"❌ Kinoni olish uchun avval kanalga a'zo bo'ling:\n{names}\n\n"
-        "A'zo bo'lgach «🔄 Tekshirish» ni bosing, kinoni o'zim yuboraman.",
+        f"❌ Kinoni olish uchun avval quyidagi kanalga a'zo bo'ling:\n{names}\n\n"
+        "A'zo bo'lgach «🔄 Tekshirish» tugmasini bosing.",
         reply_markup={"inline_keyboard": rows},
     )
 
@@ -104,7 +81,7 @@ def send_movie(chat_id, code):
         "SELECT file_id, file_type, title FROM items WHERE code = ?", (code,)
     ).fetchone()
     if not row:
-        send(chat_id, "❌ Bunday kod topilmadi. Kodni tekshirib qayta yozing.")
+        send(chat_id, "❌ Bunday kodli kino topilmadi. Kodni tekshirib qayta yozing.")
         return
     file_id, ftype, title = row
     methods = {
@@ -114,7 +91,7 @@ def send_movie(chat_id, code):
     }
     method, key = methods[ftype]
     
-    # Kinolarni saqlash va boshqalarga yuborishni (forward) taqiqlash (protect_content=True)
+    # MUHIM HIMOYA: Kinolarni saqlash va boshqalarga yuborishni (forward) taqiqlash
     api(method, chat_id=chat_id, caption=title, protect_content=True, **{key: file_id})
 
 
@@ -124,7 +101,7 @@ def handle_callback(cb):
     if cb.get("data") != "check":
         return
     if is_member(user_id):
-        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat! ✅")
+        api("answerCallbackQuery", callback_query_id=cb["id"], text="Rahmat, obuna tasdiqlandi! ✅")
         code = PENDING.pop(user_id, None)
         if code:
             send_movie(chat_id, code)
@@ -145,11 +122,11 @@ def handle(msg):
     db.execute("INSERT OR IGNORE INTO users VALUES (?)", (user_id,))
     db.commit()
 
-    # Admin: fayl qo'shish (izoh: 123 | Film nomi)
+    # Admin: kino qo'shish (Izohga kod yoziladi, masalan: 787 | Kino nomi)
     if is_admin and has_media:
         caption = (msg.get("caption") or "").strip()
         if not caption:
-            send(chat_id, "Izohga kod yozing. Masalan:\n123 | Film nomi")
+            send(chat_id, "Izohga kod yozing. Masalan:\n787 | Film nomi")
             return
         code, _, title = caption.partition("|")
         code, title = code.strip(), title.strip()
@@ -166,10 +143,10 @@ def handle(msg):
             (code, file_id, ftype, title),
         )
         db.commit()
-        send(chat_id, f"✅ Saqlandi. Kod: {code}")
+        send(chat_id, f"✅ Muvaffaqiyatli saqlandi. Kod: {code}")
         return
 
-    # Admin: o'chirish va statistika
+    # Admin: kinoni o'chirish (/del kod)
     if is_admin and text.startswith("/del "):
         code = text.split(maxsplit=1)[1].strip()
         db.execute("DELETE FROM items WHERE code = ?", (code,))
@@ -177,20 +154,22 @@ def handle(msg):
         send(chat_id, f"🗑 O'chirildi: {code}")
         return
 
+    # Admin: statistika (/stats)
     if is_admin and text == "/stats":
         users = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         items = db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        send(chat_id, f"📊 Foydalanuvchilar: {users} ta\n🎬 Kinolar: {items} ta")
+        channels_str = ", ".join(CHANNELS)
+        send(chat_id, f"📊 Foydalanuvchilar: {users} ta\n🎬 Kinolar: {items} ta\n📢 Majburiy kanal: {channels_str}")
         return
 
     if text == "/start":
         if CHANNELS and not is_member(user_id):
             ask_subscribe(chat_id)
             return
-        send(chat_id, "Salom! 👋\nKino kodini shu yerga yozing, men uni topib beraman.")
+        send(chat_id, "Salom! 👋\nKino kodini shu yerga yuboring, men uni topib beraman.")
         return
 
-    # Foydalanuvchi: kod bo'yicha qidirish
+    # Oddiy foydalanuvchi kino kodini yozganda
     if text:
         if CHANNELS and not is_member(user_id):
             PENDING[user_id] = text
@@ -200,25 +179,18 @@ def handle(msg):
 
 
 def check_channels(bot_id):
-    if not CHANNELS:
-        print("Majburiy kanal yo'q: bot hammaga kinoni obunasiz beradi.")
-        return
     for ch in CHANNELS:
         try:
-            api("getChat", chat_id=ch)
             status = api("getChatMember", chat_id=ch, user_id=bot_id)["result"]["status"]
             if status in ("administrator", "creator"):
                 print(f"✅ {ch}: kanal topildi, bot admin.")
             else:
                 print(f"⚠️ {ch}: bot admin emas! Kanalda botni administrator qiling.")
-        except urllib.error.HTTPError as e:
-            print(f"❌ {ch}: kanal topilmadi yoki bot kanalda yo'q.",
-                  e.read().decode("utf-8", "ignore"))
         except Exception as e:
             print(f"❌ {ch}: tekshirib bo'lmadi:", e)
 
 
-# --- FLASK SERVER (Render Web Service uchun) ---
+# --- FLASK SERVER (Render 24/7 ishlashi uchun) ---
 app = Flask(__name__)
 
 @app.route("/")
@@ -235,7 +207,7 @@ def main():
         me = api("getMe")
         print("Bot ishlayapti:", "@" + me["result"]["username"])
     except Exception as e:
-        print("Token noto'g'ri yoki internet yo'q:", e)
+        print("Token xato yoki internet yo'q:", e)
         return
 
     check_channels(me["result"]["id"])
@@ -257,7 +229,7 @@ def main():
                     elif "callback_query" in upd:
                         handle_callback(upd["callback_query"])
                 except Exception as e:
-                    print("Xabarda xato:", e)
+                    print("Xabarni qayta ishlashda xato:", e)
         except Exception as e:
             print("Ulanishda xato:", e)
             time.sleep(3)
